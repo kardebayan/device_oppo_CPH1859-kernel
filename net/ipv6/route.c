@@ -391,14 +391,11 @@ static void ip6_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
 	struct net_device *loopback_dev =
 		dev_net(dev)->loopback_dev;
 
-	if (dev != loopback_dev) {
-		if (idev && idev->dev == dev) {
-			struct inet6_dev *loopback_idev =
-				in6_dev_get(loopback_dev);
-			if (loopback_idev) {
-				rt->rt6i_idev = loopback_idev;
-				in6_dev_put(idev);
-			}
+	if (idev && idev->dev != loopback_dev) {
+		struct inet6_dev *loopback_idev = in6_dev_get(loopback_dev);
+		if (loopback_idev) {
+			rt->rt6i_idev = loopback_idev;
+			in6_dev_put(idev);
 		}
 	}
 }
@@ -2342,6 +2339,7 @@ struct rt6_info *rt6_get_dflt_router(const struct in6_addr *addr, struct net_dev
 	return rt;
 }
 
+#ifdef CONFIG_MTK_IPV6_VZW
 struct rt6_info *rt6_get_dflt_router_expires(struct net_device *dev)
 {
 	struct rt6_info *rt;
@@ -2364,6 +2362,7 @@ struct rt6_info *rt6_get_dflt_router_expires(struct net_device *dev)
 	read_unlock_bh(&table->tb6_lock);
 	return rt;
 }
+#endif
 
 struct rt6_info *rt6_add_dflt_router(const struct in6_addr *gwaddr,
 				     struct net_device *dev,

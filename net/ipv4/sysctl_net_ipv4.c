@@ -25,7 +25,6 @@
 #include <net/inet_frag.h>
 #include <net/ping.h>
 #include <net/tcp_memcontrol.h>
-#include <net/ip6_route.h>
 
 static int zero;
 static int one = 1;
@@ -868,6 +867,18 @@ static struct ctl_table ipv4_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 		},
+    #ifdef VENDOR_EDIT
+    //Ming.Liu@PSW.CN.WiFi.Network.quality.1065762, 2016/10/09,
+    //add for: [monitor tcp info]
+	{
+		.procname	= "tcp_info_print",
+		.data		= &sysctl_tcp_info_print,
+		.maxlen		= sizeof(int),
+		.mode		= 0664,
+		.proc_handler	= proc_do_print_tcpinfo
+	},
+    #endif /* VENDOR_EDIT */
+
 	{ }
 };
 
@@ -1022,17 +1033,6 @@ static struct ctl_table ipv4_net_table[] = {
 	{ }
 };
 
-static struct ctl_table net_table[] = {
-	{
-		.procname = "optr",
-		.data = &sysctl_optr,
-		.maxlen = sizeof(int),
-		.mode = 0664,
-		.proc_handler = proc_dointvec,
-	},
-	{ }
-};
-
 static __net_init int ipv4_sysctl_init_net(struct net *net)
 {
 	struct ctl_table *table;
@@ -1091,10 +1091,6 @@ static __init int sysctl_ipv4_init(void)
 	hdr = register_net_sysctl(&init_net, "net/ipv4", ipv4_table);
 	if (!hdr)
 		return -ENOMEM;
-
-	hdr = register_net_sysctl(&init_net, "net", net_table);
-	if (!hdr)
-		pr_info("[mtk_net] register net sysctl optr is fail.\n");
 
 	if (register_pernet_subsys(&ipv4_sysctl_ops)) {
 		unregister_net_sysctl_table(hdr);
