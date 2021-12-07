@@ -1247,18 +1247,17 @@ static void tracehook_report_syscall(struct pt_regs *regs,
 	if (dir == PTRACE_SYSCALL_EXIT)
 		tracehook_report_syscall_exit(regs, 0);
 	else if (tracehook_report_syscall_entry(regs))
-		regs->syscallno = ~0;
+		regs->syscallno = ~0UL;
 
 	regs->regs[regno] = saved_reg;
 }
 
 asmlinkage int syscall_trace_enter(struct pt_regs *regs)
 {
-
 	if (test_thread_flag(TIF_SYSCALL_TRACE))
 		tracehook_report_syscall(regs, PTRACE_SYSCALL_ENTER);
 
-	/* Do the secure computing after ptrace; failures should be fast. */
+	/* Do the secure computing check first; failures should be fast. */
 	if (secure_computing(NULL) == -1)
 		return -1;
 

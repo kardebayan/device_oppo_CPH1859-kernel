@@ -1530,7 +1530,7 @@ firmware_class.path=/vendor/firmware loop.max_part=7";
 		audio = <&audio>;
 		uart = <&apuart0>;
 		sram_share_cnt = <1>;
-		sram_share_engine = <24>;
+		sram_share_engine = <20>;
 		sram_share_event = <710>;
 		clocks = <&infracfg_ao INFRACFG_AO_GCE_CG>, <&infracfg_ao INFRACFG_AO_GCE_26M_CG>;
 		clock-names = "GCE", "GCE_TIMER";
@@ -1591,9 +1591,6 @@ firmware_class.path=/vendor/firmware loop.max_part=7";
 		interrupts = <GIC_SPI 92 IRQ_TYPE_LEVEL_LOW>; /* UART IRQ */
 		clocks =  <&clk26m>, <&infracfg_ao INFRACFG_AO_UART1_CG>;
 		clock-names = "baud", "bus";
-		dmas = <&apdma 2
-				&apdma 3>;
-		dma-names = "tx", "rx";
 	};
 
 	apuart2: serial@11004000 {
@@ -1602,9 +1599,6 @@ firmware_class.path=/vendor/firmware loop.max_part=7";
 		interrupts = <GIC_SPI 93 IRQ_TYPE_LEVEL_LOW>;/* UART IRQ */
 		clocks = <&clk26m>, <&infracfg_ao INFRACFG_AO_UART2_CG>;
 		clock-names = "baud", "bus";
-		dmas = <&apdma 4
-				&apdma 5>;
-		dma-names = "tx", "rx";
 	};
 
 	i2c6@11005000 {
@@ -1726,7 +1720,7 @@ firmware_class.path=/vendor/firmware loop.max_part=7";
 
 	consys: consys@18070000 {
 		compatible = "mediatek,mt6771-consys";
-		reg = <0 0x18070000 0 0x1000>,	/*CONN_MCU_CONFIG_BASE */
+		reg = <0 0x18070000 0 0x0200>,	/*CONN_MCU_CONFIG_BASE */
 		    <0 0x10007000 0 0x0100>,	/*TOP_RGU_BASE */
 		    <0 0x10001000 0 0x1000>,	/*INFRACFG_AO_BASE */
 		    <0 0x10006000 0 0x1000>;	/*SPM_BASE */
