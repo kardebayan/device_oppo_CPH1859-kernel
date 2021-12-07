@@ -52,6 +52,11 @@
 #include "cmdq_record_private.h"
 #include "smi_public.h"
 
+#ifdef VENDOR_EDIT
+/* Ling.Guo@PSW.MM.Display.LCD.Machine, 2018/12/03,add for mm kevent fb. */
+#include <linux/oppo_mm_kevent_fb.h>
+#endif /*VENDOR_EDIT*/
+
 /* #define CMDQ_PROFILE_COMMAND_TRIGGER_LOOP */
 /* #define CMDQ_ENABLE_BUS_ULTRA */
 
@@ -206,6 +211,7 @@ static atomic_t g_pool_buffer_count;
 #ifdef CMDQ_DUMP_FIRSTERROR
 struct DumpFirstErrorStruct gCmdqFirstError;
 #endif
+static const char *cmdq_first_err_mod;
 
 static struct DumpCommandBufferStruct gCmdqBufferDump;
 
@@ -3351,81 +3357,6 @@ static struct TaskStruct *cmdq_core_find_free_task(void)
 
 	return pTask;
 }
-
-u32 cmdq_core_get_reg_extra_size(struct TaskStruct *task,
-	struct cmdqCommandStruct *desc)
-{
-	u32 extra_size, i, pa, subsys_code;
-
-	/* calculate required buffer size
-	 * we need to consider {READ, MOVE, WRITE} for each register
-	 * and the SYNC in the begin and end
-	 */
-	if (task->regCount && task->regCount <= CMDQ_MAX_DUMP_REG_COUNT) {
-		extra_size = (3 * CMDQ_INST_SIZE * task->regCount) +
-			(2 * CMDQ_INST_SIZE);
-		/* Add move instruction count for handle Extra APB address
-		 * (add move instructions)
-		 */
-		for (i = 0; i < task->regCount; i++) {
-			pa = CMDQ_U32_PTR(
-				desc->regRequest.regAddresses)[i];
-			subsys_code = cmdq_core_subsys_from_phys_addr(pa);
-			if (subsys_code == CMDQ_SPECIAL_SUBSYS_ADDR)
-				extra_size += CMDQ_INST_SIZE;
-		}
-	} else {
-		extra_size = 0;
-	}
-
-	return extra_size;
-}
-
-void cmdq_core_append_backup_reg_inst(struct TaskStruct *task,
-	struct cmdqCommandStruct *desc)
-{
-	enum CMDQ_DATA_REGISTER_ENUM value_reg, dest_reg;
-	enum CMDQ_EVENT_ENUM access_token;
-	u32 i;
-
-	if (!task->regCount)
-		return;
-
-	CMDQ_VERBOSE("COMMAND: allocate register output section\n");
-
-	/* allocate register output section */
-	cmdq_core_alloc_reg_buffer(task);
-
-	/* allocate GPR resource */
-	cmdq_get_func()->getRegID(task->engineFlag, &value_reg,
-		&dest_reg, &access_token);
-
-	/* wait and clear access token
-	 * use SYNC TOKEN to make sure only 1 thread access at a time
-	 * bit 0-11: wait_value
-	 * bit 15: to_wait, true
-	 * bit 31: to_update, true
-	 * bit 16-27: update_value
-	 */
-	task->ctrl->append_command(task,
-		(CMDQ_CODE_WFE << 24) | access_token,
-		((1 << 31) | (1 << 15) | 1));
-
-	for (i = 0; i < task->regCount; i++) {
-		cmdq_core_insert_backup_instr(task,
-			CMDQ_U32_PTR(
-			desc->regRequest.regAddresses)[i],
-			task->regResultsMVA +
-			(i * sizeof(task->regResults[0])),
-			value_reg, dest_reg);
-	}
-
-	/* set directly */
-	task->ctrl->append_command(task,
-		(CMDQ_CODE_WFE << 24) | access_token,
-		((1 << 31) | (1 << 16)));
-}
-
 static bool cmdq_core_check_gpr_valid(const uint32_t gpr, const bool val)
 {
 	if (val)
@@ -3540,6 +3471,80 @@ static int32_t cmdq_core_check_task_valid(struct TaskStruct *pTask)
 	return ret;
 }
 
+u32 cmdq_core_get_reg_extra_size(struct TaskStruct *task,
+	struct cmdqCommandStruct *desc)
+{
+	u32 extra_size, i, pa, subsys_code;
+
+	/* calculate required buffer size
+	 * we need to consider {READ, MOVE, WRITE} for each register
+	 * and the SYNC in the begin and end
+	 */
+	if (task->regCount && task->regCount <= CMDQ_MAX_DUMP_REG_COUNT) {
+		extra_size = (3 * CMDQ_INST_SIZE * task->regCount) +
+			(2 * CMDQ_INST_SIZE);
+		/* Add move instruction count for handle Extra APB address
+		 * (add move instructions)
+		 */
+		for (i = 0; i < task->regCount; i++) {
+			pa = CMDQ_U32_PTR(
+				desc->regRequest.regAddresses)[i];
+			subsys_code = cmdq_core_subsys_from_phys_addr(pa);
+			if (subsys_code == CMDQ_SPECIAL_SUBSYS_ADDR)
+				extra_size += CMDQ_INST_SIZE;
+		}
+	} else {
+		extra_size = 0;
+	}
+
+	return extra_size;
+}
+
+void cmdq_core_append_backup_reg_inst(struct TaskStruct *task,
+	struct cmdqCommandStruct *desc)
+{
+	enum CMDQ_DATA_REGISTER_ENUM value_reg, dest_reg;
+	enum CMDQ_EVENT_ENUM access_token;
+	u32 i;
+
+	if (!task->regCount)
+		return;
+
+	CMDQ_VERBOSE("COMMAND: allocate register output section\n");
+
+	/* allocate register output section */
+	cmdq_core_alloc_reg_buffer(task);
+
+	/* allocate GPR resource */
+	cmdq_get_func()->getRegID(task->engineFlag, &value_reg,
+		&dest_reg, &access_token);
+
+	/* wait and clear access token
+	 * use SYNC TOKEN to make sure only 1 thread access at a time
+	 * bit 0-11: wait_value
+	 * bit 15: to_wait, true
+	 * bit 31: to_update, true
+	 * bit 16-27: update_value
+	 */
+	task->ctrl->append_command(task,
+		(CMDQ_CODE_WFE << 24) | access_token,
+		((1 << 31) | (1 << 15) | 1));
+
+	for (i = 0; i < task->regCount; i++) {
+		cmdq_core_insert_backup_instr(task,
+			CMDQ_U32_PTR(
+			desc->regRequest.regAddresses)[i],
+			task->regResultsMVA +
+			(i * sizeof(task->regResults[0])),
+			value_reg, dest_reg);
+	}
+
+	/* set directly */
+	task->ctrl->append_command(task,
+		(CMDQ_CODE_WFE << 24) | access_token,
+		((1 << 31) | (1 << 16)));
+}
+
 static int32_t cmdq_core_insert_read_reg_command(struct TaskStruct *pTask,
 	struct cmdqCommandStruct *pCommandDesc)
 {
@@ -3585,7 +3590,6 @@ static int32_t cmdq_core_insert_read_reg_command(struct TaskStruct *pTask,
 		"[CMD] line:%d CMDEnd:%p cmdSize:%d bufferSize:%u block size:%u\n",
 		__LINE__, pTask->pCMDEnd, pTask->commandSize,
 		pTask->bufferSize, pCommandDesc->blockSize);
-
 	if (userSpaceRequest && !cmdq_core_check_task_valid(pTask))
 		return -EFAULT;
 
@@ -5506,6 +5510,10 @@ static void cmdq_core_dump_summary(const struct TaskStruct *pTask, s32 thread,
 	/* Do summary ! */
 	cmdq_core_parse_error(pNGTask, thread, &module, &irqFlag, &instA, &instB);
 	CMDQ_ERR("** [Module] %s **\n", module);
+
+	if (!cmdq_first_err_mod)
+		cmdq_first_err_mod = module;
+
 	if (pTask != pNGTask) {
 		CMDQ_ERR
 		    ("** [Note] PC is not in first error task (0x%p) but in previous task (0x%p) **\n",
@@ -7119,51 +7127,6 @@ static struct TaskStruct *cmdq_core_search_task_by_pc(uint32_t threadPC,
 	return pTask;
 }
 
-static void cmdq_core_reset_dsi(struct TaskStruct *pTask, s32 thread)
-{
-#ifdef CMDQ_DISP_DSI_DEBUG
-	uint32_t *pcVA = NULL, pcPA = 0;
-	uint32_t insts[4] = { 0 };
-	char parsedInstruction[128] = { 0 };
-
-	if (pTask->scenario != CMDQ_SCENARIO_DISP_ESD_CHECK &&
-		pTask->scenario != CMDQ_SCENARIO_PRIMARY_DISP)
-		return;
-
-	CMDQ_MSG("ready to verify pre-dump!!\n");
-
-	pcVA = cmdq_core_get_pc(pTask, thread, insts, &pcPA);
-	if (pcVA) {
-		const uint32_t op = (insts[3] & 0xFF000000) >> 24;
-
-		cmdq_core_parse_instruction(pcVA, parsedInstruction,
-			sizeof(parsedInstruction));
-
-		/* for WFE, we specifically dump the event value */
-		if (op == CMDQ_CODE_WFE) {
-			uint32_t regValue = 0;
-			const uint32_t eventID = 0x3FF & insts[3];
-
-			CMDQ_REG_SET32(CMDQ_SYNC_TOKEN_ID, eventID);
-			regValue = CMDQ_REG_GET32(CMDQ_SYNC_TOKEN_VAL);
-			/* DECLAR_EVENT(CMDQ_EVENT_MUTEX0_STREAM_EOF, stream_done_0) */
-			/* stream_done_0 = <130> */
-			if (eventID == 130) {
-				CMDQ_LOG(
-					"Thread %d PC:0x%p(0x%08x) 0x%08x:0x%08x => %s value:%d",
-					thread, pcVA,
-					pcPA, insts[2],
-					insts[3],
-					parsedInstruction,
-					regValue);
-				CMDQ_LOG("call display to reset dsi\n");
-				ddp_dump_and_reset_dsi0();
-			}
-		}
-	}
-#endif
-}
-
 /* Implementation of wait task done
  * Return:
  *     wait time of wait_event_timeout() kernel API
@@ -7183,6 +7146,10 @@ static int32_t cmdq_core_wait_task_done_with_timeout_impl(
 	s32 delay_id = cmdq_get_delay_id_by_scenario(pTask->scenario);
 	s32 slot = -1, i = 0;
 	u32 tpr_mask = 0;
+	#ifdef VENDOR_EDIT
+	/* Ling.Guo@PSW.MM.Display.LCD.Machine, 2018/12/03,add for mm kevent fb. */
+	unsigned char payload[100] = "";
+	#endif
 
 	pThread = &(gCmdqContext.thread[thread]);
 	retry_count = 0;
@@ -7215,9 +7182,6 @@ static int32_t cmdq_core_wait_task_done_with_timeout_impl(
 
 		CMDQ_LOG("======= [CMDQ] SW timeout Pre-dump(%d) task:0x%p slot:%d =======\n",
 			retry_count, pTask, slot);
-
-		/* reset dsi if primary display or esd thread entered pre-dump */
-		cmdq_core_reset_dsi(pTask, thread);
 
 		tpr_mask = CMDQ_REG_GET32(CMDQ_TPR_MASK);
 		if (retry_count == 0) {
@@ -7253,6 +7217,12 @@ static int32_t cmdq_core_wait_task_done_with_timeout_impl(
 			} else {
 				CMDQ_LOG("delay id:%d tpr mask:0x%08x\n", delay_id, tpr_mask);
 			}
+			#ifdef VENDOR_EDIT
+			/* Ling.Guo@PSW.MM.Display.LCD.Machine, 2018/12/03,add for mm kevent fb. */
+			scnprintf(payload, sizeof(payload), "EventID@@%d$$CMDQSWtimeout@@task:0x%p slot:%d",
+				OPPO_MM_DIRVER_FB_EVENT_ID_MTK_CMDQ, pTask, slot);
+			upload_mm_kevent_fb_data(OPPO_MM_DIRVER_FB_EVENT_MODULE_DISPLAY,payload);
+			#endif
 		} else {
 			/* dump simple status only */
 			CMDQ_PROF_SPIN_LOCK(gCmdqExecLock, flags, wait_task_dump);
@@ -9914,6 +9884,11 @@ int32_t cmdq_core_save_first_dump(const char *string, ...)
 #else
 	return -EFAULT;
 #endif
+}
+
+const char *cmdq_core_query_first_err_mod(void)
+{
+	return cmdq_first_err_mod;
 }
 
 #ifdef CMDQ_DUMP_FIRSTERROR

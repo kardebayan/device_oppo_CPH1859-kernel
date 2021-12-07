@@ -32,8 +32,6 @@
 #include <linux/of_gpio.h>
 #include <linux/of_address.h>
 #include "ccci_config.h"
-#include <mt-plat/mtk_secure_api.h>
-#include <trng.h>
 
 #ifdef FEATURE_INFORM_NFC_VSIM_CHANGE
 #include <mach/mt6605.h>
@@ -125,12 +123,8 @@ static int get_gpio_id_from_dt(struct device_node *node, char *gpio_name, int *m
 	int ret = 0;
 
 	/* For new API, there is a shift between AP GPIO ID and MD GPIO ID */
-#ifdef ENABLE_GPIO_FORMAT_SPEC
-	ret = of_property_read_u32(node, gpio_name, &gpio_id);
-#else
 	gpio_id = of_get_named_gpio(node, gpio_name, 0);
 	ret = of_property_read_u32_index(node, gpio_name, 1, &md_view_gpio_id);
-#endif
 	if (ret) {
 		CCCI_ERROR_LOG(0, RPC, "get md view gpio id from dt fail\n");
 		return -1;
@@ -732,7 +726,7 @@ static void ccci_rpc_work_helper(struct port_t *port, struct rpc_pkt *pkt,
 		{
 			u16 count = 0;
 			struct ccci_rpc_clkbuf_result *clkbuf;
-			enum CLK_BUF_SWCTRL_STATUS_T swctrl_status[CLKBUF_MAX_COUNT];
+			CLK_BUF_SWCTRL_STATUS_T swctrl_status[CLKBUF_MAX_COUNT];
 			struct ccci_rpc_clkbuf_input *clkinput;
 			u32 AfcDac;
 
@@ -979,32 +973,6 @@ static void ccci_rpc_work_helper(struct port_t *port, struct rpc_pkt *pkt,
 			/* 0xF for failure */
 			memset(output, 0xF, sizeof(struct ccci_rpc_md_dtsi_output));
 			get_md_dtsi_val(input, output);
-			break;
-		}
-	case IPC_RPC_TRNG:
-		{
-			unsigned int trng;
-
-			if (pkt_num != 1) {
-				CCCI_ERROR_LOG(md_id, RPC, "invalid parameter for [0x%X]: pkt_num=%d!\n",
-					     p_rpc_buf->op_id, pkt_num);
-				tmp_data[0] = FS_PARAM_ERROR;
-				pkt_num = 0;
-				pkt[pkt_num].len = sizeof(unsigned int);
-				pkt[pkt_num++].buf = (void *)&tmp_data[0];
-				pkt[pkt_num].len = sizeof(unsigned int);
-				pkt[pkt_num++].buf = (void *)&tmp_data[0];
-				break;
-			}
-			trng = mt_secure_call_ret1(MTK_SIP_KERNEL_GET_RND,
-					TRNG_MAGIC, 0, 0, 0);
-			pkt_num = 0;
-			tmp_data[0] = 0;
-			tmp_data[1] = trng;
-			pkt[pkt_num].len = sizeof(unsigned int);
-			pkt[pkt_num++].buf = (void *)&tmp_data[0];
-			pkt[pkt_num].len = sizeof(unsigned int);
-			pkt[pkt_num++].buf = (void *)&tmp_data[1];
 			break;
 		}
 	case IPC_RPC_IT_OP:

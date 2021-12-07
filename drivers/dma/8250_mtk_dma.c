@@ -50,8 +50,8 @@
 #define VFF_STOP_CLR_B		0
 #define VFF_FLUSH_B		BIT(0)
 #define VFF_FLUSH_CLR_B		0
+#define VFF_4G_SUPPORT_B	BIT(0)
 #define VFF_4G_SUPPORT_CLR_B	0
-#define VFF_ORI_ADDR_BITS_NUM    32
 
 #define VFF_TX_THRE(n)		((n)*7/8) /* interrupt trigger level for tx */
 #define VFF_RX_THRE(n)		((n)*3/4) /* interrupt trigger level for rx */
@@ -68,7 +68,7 @@ struct mtk_dmadev {
 	struct list_head pending;
 	struct clk *clk;
 	unsigned int dma_requests;
-	unsigned int support_bits;
+	bool support_33bits;
 	unsigned int dma_irq[MTK_SDMA_CHANNELS];
 	struct mtk_chan *lch_map[MTK_SDMA_CHANNELS];
 };
@@ -371,7 +371,7 @@ static void mtk_dma_reset(struct mtk_chan *c)
 	else
 		pr_info("Unknown direction.\n");
 
-	if (mtkd->support_bits)
+	if (mtkd->support_33bits)
 		mtk_dma_chan_write(c, VFF_4G_SUPPORT, VFF_4G_SUPPORT_CLR_B);
 }
 
@@ -499,12 +499,6 @@ static void mtk_dma_free_chan_resources(struct dma_chan *chan)
 		free_irq(mtkd->dma_irq[c->dma_ch], chan);
 	}
 
-	/* disable the tasklet. if the task is running, wait for it finish and
-	 * remove it from tasklet list. Put it before reset channel paremeter
-	 * because it may running.
-	 */
-	tasklet_kill(&mtkd->task);
-
 	c->channel_base = NULL;
 	mtkd->lch_map[c->dma_ch] = NULL;
 	vchan_free_chan_resources(&c->vc);
@@ -512,6 +506,7 @@ static void mtk_dma_free_chan_resources(struct dma_chan *chan)
 	pr_debug("freeing channel for %u\n", c->dma_sig);
 	c->dma_sig = 0;
 
+	tasklet_kill(&mtkd->task);
 	pm_runtime_put_sync(mtkd->ddev.dev);
 }
 
@@ -639,10 +634,8 @@ static irqreturn_t mtk_dma_rx_interrupt(int irq, void *dev_id)
 	mtk_dma_chan_write(c, VFF_INT_FLAG, VFF_RX_INT_FLAG_CLR_B);
 
 	if (atomic_inc_return(&c->entry) > 1) {
-		spin_lock_irqsave(&mtkd->lock, flags);
 		if (list_empty(&mtkd->pending))
 			list_add_tail(&c->node, &mtkd->pending);
-		spin_unlock_irqrestore(&mtkd->lock, flags);
 		tasklet_schedule(&mtkd->task);
 	} else {
 		mtk_dma_start_rx(c);
@@ -662,9 +655,7 @@ static irqreturn_t mtk_dma_tx_interrupt(int irq, void *dev_id)
 
 	spin_lock_irqsave(&c->vc.lock, flags);
 	if (c->remain_size != 0) {
-		spin_lock_irqsave(&mtkd->lock, flags);
 		list_add_tail(&c->node, &mtkd->pending);
-		spin_unlock_irqrestore(&mtkd->lock, flags);
 		tasklet_schedule(&mtkd->task);
 	} else {
 		mtk_dma_remove_virt_list(d->vd.tx.cookie, &c->vc);
@@ -700,9 +691,6 @@ static int mtk_dma_slave_config(struct dma_chan *chan,
 		mtk_dma_chan_write(c, VFF_INT_FLAG, VFF_RX_INT_FLAG_CLR_B);
 		mtk_dma_chan_write(c, VFF_EN, VFF_EN_B);
 
-		if (mtkd->support_bits > VFF_ORI_ADDR_BITS_NUM)
-			mtk_dma_chan_write(c, VFF_4G_SUPPORT, upper_32_bits(cfg->src_addr));
-
 		if (c->requested == false) {
 			atomic_set(&c->entry, 0);
 			c->requested = true;
@@ -723,9 +711,6 @@ static int mtk_dma_slave_config(struct dma_chan *chan,
 		mtk_dma_chan_write(c, VFF_INT_FLAG, VFF_TX_INT_FLAG_CLR_B);
 		mtk_dma_chan_write(c, VFF_EN, VFF_EN_B);
 
-		if (mtkd->support_bits > VFF_ORI_ADDR_BITS_NUM)
-			mtk_dma_chan_write(c, VFF_4G_SUPPORT, upper_32_bits(cfg->dst_addr));
-
 		if (c->requested == false) {
 			c->requested = true;
 			ret = request_irq(mtkd->dma_irq[c->dma_ch],
@@ -738,6 +723,9 @@ static int mtk_dma_slave_config(struct dma_chan *chan,
 		}
 	} else
 		pr_info("Unknown direction!\n");
+
+	if (mtkd->support_33bits)
+		mtk_dma_chan_write(c, VFF_4G_SUPPORT, VFF_4G_SUPPORT_B);
 
 	if (mtk_dma_chan_read(c, VFF_EN) != VFF_EN_B) {
 		pr_err("config dir%d dma fail\n", cfg->direction);
@@ -833,7 +821,6 @@ static int mtk_dma_probe(struct platform_device *pdev)
 	struct mtk_dmadev *mtkd;
 	struct resource *res;
 	int rc, i;
-	unsigned int addr_bits = VFF_ORI_ADDR_BITS_NUM;
 
 	mtkd = devm_kzalloc(&pdev->dev, sizeof(*mtkd), GFP_KERNEL);
 	if (mtkd == NULL)
@@ -863,13 +850,15 @@ static int mtk_dma_probe(struct platform_device *pdev)
 		return PTR_ERR(mtkd->clk);
 	}
 
-	if (of_property_read_u32(pdev->dev.of_node, "dma-bits", &addr_bits))
-		addr_bits = VFF_ORI_ADDR_BITS_NUM;
+	if (of_property_read_bool(pdev->dev.of_node, "dma-33bits")) {
+		pr_info("Support dma 33bits\n");
+		mtkd->support_33bits = true;
+	}
 
-	pr_info("DMA address bits: %d\n", addr_bits);
-
-	mtkd->support_bits = addr_bits;
-	rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(addr_bits));
+	if (mtkd->support_33bits)
+		rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(33));
+	else
+		rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
 	if (rc)
 		return rc;
 

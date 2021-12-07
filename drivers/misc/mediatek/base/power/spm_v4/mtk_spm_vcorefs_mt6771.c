@@ -209,6 +209,7 @@ char *spm_vcorefs_dump_dvfs_regs(char *p)
 		p += sprintf(p, "SPM_DVFS_CMD0~1        : 0x%x, 0x%x\n",
 							spm_read(SPM_DVFS_CMD0), spm_read(SPM_DVFS_CMD1));
 		p += sprintf(p, "PCM_IM_PTR             : 0x%x (%u)\n", spm_read(PCM_IM_PTR), spm_read(PCM_IM_LEN));
+		p += sprintf(p, "SPM_SW_RSV_3           : 0x%x\n", spm_read(SPM_SW_RSV_3));
 
 		/* BW Info */
 		p += sprintf(p, "BW_TOTAL: %d (AVG: %d) thres: 0x%x, 0x%x seg: 0x%x\n",
@@ -290,7 +291,7 @@ char *spm_vcorefs_dump_dvfs_regs(char *p)
 		spm_vcorefs_warn("SPM_DVFS_CMD0~1        : 0x%x, 0x%x\n",
 							spm_read(SPM_DVFS_CMD0), spm_read(SPM_DVFS_CMD1));
 		spm_vcorefs_warn("PCM_IM_PTR             :: 0x%x (%u)\n", spm_read(PCM_IM_PTR), spm_read(PCM_IM_LEN));
-
+		spm_vcorefs_warn("SPM_SW_RSV_3           : 0x%x\n", spm_read(SPM_SW_RSV_3));
 		/* BW Info */
 		spm_vcorefs_warn("BW_TOTAL: %d (AVG: %d) thres: 0x%x, 0x%x seg: 0x%x\n",
 				dvfsrc_get_bw(QOS_TOTAL), dvfsrc_get_bw(QOS_TOTAL_AVE),
@@ -570,8 +571,7 @@ void dvfsrc_md_scenario_update(bool suspend)
 			spm_write(DVFSRC_EMI_MD2SPM0, 0x0);
 		else
 			spm_write(DVFSRC_EMI_MD2SPM0, 0x38);
-	} else if ((spmfw_dram_type == SPMFW_LP4X_2CH_3733) ||
-		   (spmfw_dram_type == SPMFW_LP4_2CH_2400)) {
+	} else if (spmfw_dram_type == SPMFW_LP4X_2CH_3733) {
 		if (suspend)
 			spm_write(DVFSRC_EMI_MD2SPM0, 0x80C0);
 		else
@@ -694,8 +694,7 @@ static void dvfsrc_init(void)
 		spm_write(DVFSRC_EMI_MD2SPM0, 0x38);
 		spm_write(DVFSRC_EMI_MD2SPM1, 0x80C0);
 		spm_write(DVFSRC_VCORE_MD2SPM0, 0x80C0);
-	} else if ((__spm_get_dram_type() == SPMFW_LP4X_2CH_3733) ||
-		   (__spm_get_dram_type() == SPMFW_LP4_2CH_2400)) {
+	} else if (__spm_get_dram_type() == SPMFW_LP4X_2CH_3733) {
 		/* LP4 2CH 3600 */
 		spm_write(DVFSRC_LEVEL_LABEL_0_1, 0x00100000);
 		spm_write(DVFSRC_LEVEL_LABEL_2_3, 0x00210011);
@@ -844,8 +843,7 @@ void spm_request_dvfs_opp(int id, enum dvfs_opp opp)
 	switch (id) {
 	case 0: /* ZQTX */
 		if (!((__spm_get_dram_type() == SPMFW_LP4X_2CH_3733) ||
-			(__spm_get_dram_type() == SPMFW_LP4X_2CH_3200) ||
-			(__spm_get_dram_type() == SPMFW_LP4_2CH_2400)))
+			(__spm_get_dram_type() == SPMFW_LP4X_2CH_3200)))
 			return;
 		mt_secure_call(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_2, id, emi_req[opp]);
 		break;

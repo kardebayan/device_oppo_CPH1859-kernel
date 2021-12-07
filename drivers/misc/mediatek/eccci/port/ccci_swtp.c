@@ -27,6 +27,7 @@
 #include "ccci_swtp.h"
 #include "ccci_fsm.h"
 
+
 const struct of_device_id swtp_of_match[] = {
 	{ .compatible = SWTP_COMPATIBLE_DEVICE_ID, },
 	{},
@@ -85,6 +86,7 @@ static int swtp_switch_mode(struct swtp_t *swtp)
 	}
 	CCCI_LEGACY_ALWAYS_LOG(swtp->md_id, SYS, "%s mode %d\n", __func__, swtp->curr_mode);
 	spin_unlock_irqrestore(&swtp->spinlock, flags);
+
 
 	return ret;
 }
@@ -175,6 +177,7 @@ int swtp_md_tx_power_req_hdlr(int md_id, int data)
 	return 0;
 }
 
+
 int swtp_init(int md_id)
 {
 	int ret = 0;
@@ -191,6 +194,7 @@ int swtp_init(int md_id)
 	swtp_data[md_id].curr_mode = SWTP_EINT_PIN_PLUG_OUT;
 	spin_lock_init(&swtp_data[md_id].spinlock);
 	INIT_DELAYED_WORK(&swtp_data[md_id].delayed_work, swtp_tx_work);
+
 	node = of_find_matching_node(NULL, swtp_of_match);
 	if (node) {
 		ret = of_property_read_u32_array(node, "debounce", ints, ARRAY_SIZE(ints));
@@ -198,15 +202,17 @@ int swtp_init(int md_id)
 		if (ret)
 			CCCI_LEGACY_ERR_LOG(md_id, SYS, "%s get property fail\n", __func__);
 
-#ifdef CONFIG_MTK_EIC /* for chips before mt6739 */
+#ifdef CONFIG_MTK_EIC /* for chips exclude mt6739,mt6771,mt6775 */
 		swtp_data[md_id].gpiopin = ints[0];
 		swtp_data[md_id].setdebounce = ints[1];
 		swtp_data[md_id].eint_type = ints1[1];
-#else /* for mt6739,and chips after mt6739 */
+#else /* for mt6739,mt6771,mt6775  MT6779*/
 		swtp_data[md_id].setdebounce = ints[0];
-		swtp_data[md_id].gpiopin = of_get_named_gpio(node, "deb-gpios", 0);
+		swtp_data[md_id].gpiopin =  of_get_named_gpio(node, "deb-gpios", 0);	//ints1[0]
 		swtp_data[md_id].eint_type = ints1[1];
 #endif
+
+
 		gpio_set_debounce(swtp_data[md_id].gpiopin, swtp_data[md_id].setdebounce);
 		swtp_data[md_id].irq = irq_of_parse_and_map(node, 0);
 		ret = request_irq(swtp_data[md_id].irq, swtp_irq_func,
@@ -223,6 +229,8 @@ int swtp_init(int md_id)
 		ret = -1;
 	}
 	register_ccci_sys_call_back(md_id, MD_SW_MD1_TX_POWER_REQ, swtp_md_tx_power_req_hdlr);
+
+
 	return ret;
 }
 

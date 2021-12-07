@@ -23,8 +23,11 @@ int last_als_report_data = -1;
 static struct alsps_init_info *alsps_init_list[MAX_CHOOSE_ALSPS_NUM] = {0};
 atomic_t prox_state;
 enum ProxState {
-	PROX_STATE_NEAR,
+#ifdef VENDOR_EDIT
+/*zhq@PSW.BSP.Sensor, 2018/11/20, Add for change prox state*/
 	PROX_STATE_FAR,
+	PROX_STATE_NEAR,
+#endif /*VENDOR_EDIT*/
 };
 
 int als_data_report(int value, int status)
@@ -47,7 +50,8 @@ int als_data_report(int value, int status)
 			pr_err_ratelimited("event buffer full, so drop this data\n");
 		cxt->is_get_valid_als_data_after_enable = true;
 	}
-	if (value != last_als_report_data) {
+	//if (value != last_als_report_data)
+	{
 		event.handle = ID_LIGHT;
 		event.flush_action = DATA_ACTION;
 		event.word[0] = value;
@@ -57,19 +61,6 @@ int als_data_report(int value, int status)
 			pr_err_ratelimited("event buffer full, so drop this data\n");
 		last_als_report_data = value;
 	}
-	return err;
-}
-
-int als_cali_report(int *value)
-{
-	int err = 0;
-	struct sensor_event event;
-
-	memset(&event, 0, sizeof(struct sensor_event));
-	event.handle = ID_LIGHT;
-	event.flush_action = CALI_ACTION;
-	event.word[0] = value[0];
-	err = sensor_input_event(alsps_context_obj->als_mdev.minor, &event);
 	return err;
 }
 
@@ -127,6 +118,11 @@ int rgbw_flush_report(void)
 	return err;
 }
 
+#ifdef VENDOR_EDIT
+/*zhq@PSW.BSP.Sensor, 2018/11/20, Add for prox report count*/
+extern uint32_t kernel_prox_report_count;
+#endif /*VENDOR_EDIT*/
+
 int ps_data_report(int value, int status)
 {
 	int err = 0;
@@ -135,9 +131,15 @@ int ps_data_report(int value, int status)
 	memset(&event, 0, sizeof(struct sensor_event));
 
 	__pm_wakeup_event(&alsps_context_obj->ps_wake_lock, msecs_to_jiffies(100));
-	pr_notice("[ALS/PS]ps_data_report! %d, %d\n", value, status);
+
 	event.flush_action = DATA_ACTION;
 	event.word[0] = value + 1;
+#ifdef VENDOR_EDIT
+/*zhq@PSW.BSP.Sensor, 2018/11/20, Add for prox report count*/
+	event.word[1] = kernel_prox_report_count;
+
+	pr_notice("[ALS/PS] ps_data_report! value %d, count %d\n", value, event.word[1]);
+#endif /*VENDOR_EDIT*/
 	atomic_set(&prox_state, value);
 	event.status = status;
 	err = sensor_input_event(alsps_context_obj->ps_mdev.minor, &event);
@@ -607,28 +609,6 @@ static ssize_t als_show_devnum(struct device *dev,
 {
 	return snprintf(buf, PAGE_SIZE, "%d\n", 0);
 }
-static ssize_t als_store_cali(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct alsps_context *cxt = NULL;
-	int err = 0;
-	uint8_t *cali_buf = NULL;
-
-	cali_buf = vzalloc(count);
-	if (!cali_buf)
-		return -ENOMEM;
-	memcpy(cali_buf, buf, count);
-
-	mutex_lock(&alsps_context_obj->alsps_op_mutex);
-	cxt = alsps_context_obj;
-	if (cxt->als_ctl.set_cali != NULL)
-		err = cxt->als_ctl.set_cali(cali_buf, count);
-	if (err < 0)
-		pr_err("als set cali err %d\n", err);
-	mutex_unlock(&alsps_context_obj->alsps_op_mutex);
-	vfree(cali_buf);
-	return count;
-}
 
 #if !defined(CONFIG_NANOHUB) || !defined(CONFIG_MTK_ALSPSHUB)
 static int ps_enable_and_batch(void)
@@ -780,12 +760,20 @@ static ssize_t ps_store_batch(struct device *dev, struct device_attribute *attr,
 		err = cxt->ps_ctl.batch(0, cxt->ps_delay_ns, cxt->ps_latency_ns);
 	else
 		err = cxt->ps_ctl.batch(0, cxt->ps_delay_ns, 0);
+
+#ifndef VENDOR_EDIT
+//zhq@PSW.BSP.Sensor, 2018-11-26, remove PS report default status
 	ps_data_report(1, SENSOR_STATUS_ACCURACY_HIGH);
+#endif
 #else
 	err = ps_enable_and_batch();
 #endif
+
 	pr_debug("prox_state:%d\n", atomic_read(&prox_state));
+#ifndef VENDOR_EDIT
+//zhye@PSW.BSP.Sensor, 2018-11-26, remove PS report default status
 	ps_data_report(atomic_read(&prox_state), SENSOR_STATUS_ACCURACY_HIGH);
+#endif
 	mutex_unlock(&alsps_context_obj->alsps_op_mutex);
 	ALSPS_LOG("ps_store_batch done: %d\n", cxt->is_ps_batch_enable);
 	if (err)
@@ -983,9 +971,8 @@ DEVICE_ATTR(alsactive,		S_IWUSR | S_IRUGO, als_show_active, als_store_active);
 DEVICE_ATTR(alsbatch,		S_IWUSR | S_IRUGO, als_show_batch,  als_store_batch);
 DEVICE_ATTR(alsflush,		S_IWUSR | S_IRUGO, als_show_flush,  als_store_flush);
 DEVICE_ATTR(alsdevnum,		S_IWUSR | S_IRUGO, als_show_devnum,  NULL);
-DEVICE_ATTR(alscali,		S_IWUSR | S_IRUGO, NULL, als_store_cali);
 DEVICE_ATTR(psactive,		S_IWUSR | S_IRUGO, ps_show_active, ps_store_active);
-DEVICE_ATTR(psbatch,		S_IWUSR | S_IRUGO, ps_show_batch, ps_store_batch);
+DEVICE_ATTR(psbatch,		S_IWUSR | S_IRUGO, ps_show_batch,  ps_store_batch);
 DEVICE_ATTR(psflush,		S_IWUSR | S_IRUGO, ps_show_flush,  ps_store_flush);
 DEVICE_ATTR(psdevnum,		S_IWUSR | S_IRUGO, ps_show_devnum,  NULL);
 DEVICE_ATTR(pscali,		S_IWUSR | S_IRUGO, NULL, ps_store_cali);
@@ -995,7 +982,6 @@ static struct attribute *als_attributes[] = {
 	&dev_attr_alsbatch.attr,
 	&dev_attr_alsflush.attr,
 	&dev_attr_alsdevnum.attr,
-	&dev_attr_alscali.attr,
 	NULL
 };
 
@@ -1141,7 +1127,6 @@ int als_register_control_path(struct als_control_path *ctl)
 	cxt->als_ctl.enable_nodata = ctl->enable_nodata;
 	cxt->als_ctl.batch = ctl->batch;
 	cxt->als_ctl.flush = ctl->flush;
-	cxt->als_ctl.set_cali = ctl->set_cali;
 	cxt->als_ctl.rgbw_enable = ctl->rgbw_enable;
 	cxt->als_ctl.rgbw_batch = ctl->rgbw_batch;
 	cxt->als_ctl.rgbw_flush = ctl->rgbw_flush;

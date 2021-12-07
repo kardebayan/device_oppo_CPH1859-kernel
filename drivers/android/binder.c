@@ -357,7 +357,6 @@ struct binder_error {
  * @min_priority:         minimum scheduling priority
  *                        (invariant after initialized)
  * @inherit_rt:           inherit RT scheduling policy from caller
- *                        (invariant after initialized)
  * @txn_security_ctx:     require sender's security context
  *                        (invariant after initialized)
  * @async_todo:           list of async work items
@@ -398,7 +397,7 @@ struct binder_node {
 		u8 sched_policy:2;
 		u8 inherit_rt:1;
 		u8 accept_fds:1;
-		u8 txn_security_ctx:1;
+        u8 txn_security_ctx:1;
 		u8 min_priority;
 	};
 	bool has_async_transaction;
@@ -656,7 +655,7 @@ struct binder_transaction {
 	struct binder_priority	saved_priority;
 	bool    set_priority_called;
 	kuid_t	sender_euid;
-	binder_uintptr_t security_ctx;
+    binder_uintptr_t security_ctx;
 	/**
 	 * @lock:  protects @from, @to_proc, and @to_thread
 	 *
@@ -1366,7 +1365,7 @@ static struct binder_node *binder_init_node_ilocked(
 	node->min_priority = to_kernel_prio(node->sched_policy, priority);
 	node->accept_fds = !!(flags & FLAT_BINDER_FLAG_ACCEPTS_FDS);
 	node->inherit_rt = !!(flags & FLAT_BINDER_FLAG_INHERIT_RT);
-	node->txn_security_ctx = !!(flags & FLAT_BINDER_FLAG_TXN_SECURITY_CTX);
+    node->txn_security_ctx = !!(flags & FLAT_BINDER_FLAG_TXN_SECURITY_CTX);
 	spin_lock_init(&node->lock);
 	INIT_LIST_HEAD(&node->work.entry);
 	INIT_LIST_HEAD(&node->async_todo);
@@ -2905,8 +2904,6 @@ static void binder_transaction(struct binder_proc *proc,
 	binder_size_t last_fixup_min_off = 0;
 	struct binder_context *context = proc->context;
 	int t_debug_id = atomic_inc_return(&binder_last_id);
-	char *secctx = NULL;
-	u32 secctx_sz = 0;
 
 	e = binder_transaction_log_add(&binder_transaction_log);
 	e->debug_id = t_debug_id;
@@ -3130,29 +3127,6 @@ static void binder_transaction(struct binder_proc *proc,
 		t->priority = target_proc->default_priority;
 	}
 
-	if (target_node && target_node->txn_security_ctx) {
-		u32 secid;
-		size_t added_size;
-
-		security_task_getsecid(proc->tsk, &secid);
-		ret = security_secid_to_secctx(secid, &secctx, &secctx_sz);
-		if (ret) {
-			return_error = BR_FAILED_REPLY;
-			return_error_param = ret;
-			return_error_line = __LINE__;
-			goto err_get_secctx_failed;
-		}
-		added_size = ALIGN(secctx_sz, sizeof(u64));
-		extra_buffers_size += added_size;
-		if (extra_buffers_size < added_size) {
-			/* integer overflow of extra_buffers_size */
-			return_error = BR_FAILED_REPLY;
-			return_error_param = EINVAL;
-			return_error_line = __LINE__;
-			goto err_bad_extra_size;
-		}
-	}
-
 	trace_binder_transaction(reply, t, target_node);
 
 	t->buffer = binder_alloc_new_buf(&target_proc->alloc, tr->data_size,
@@ -3169,19 +3143,7 @@ static void binder_transaction(struct binder_proc *proc,
 		t->buffer = NULL;
 		goto err_binder_alloc_buf_failed;
 	}
-	if (secctx) {
-		size_t buf_offset = ALIGN(tr->data_size, sizeof(void *)) +
-			ALIGN(tr->offsets_size, sizeof(void *)) +
-			ALIGN(extra_buffers_size, sizeof(void *)) -
-			ALIGN(secctx_sz, sizeof(u64));
-		char *kptr = t->buffer->data + buf_offset;
-
-		t->security_ctx = (uintptr_t)kptr +
-		    binder_alloc_get_user_buffer_offset(&target_proc->alloc);
-		memcpy(kptr, secctx, secctx_sz);
-		security_release_secctx(secctx, secctx_sz);
-		secctx = NULL;
-	}
+	t->buffer->allow_user_free = 0;
 	t->buffer->debug_id = t->debug_id;
 	t->buffer->transaction = t;
 	t->buffer->target_node = target_node;
@@ -3452,10 +3414,6 @@ err_copy_data_failed:
 	t->buffer->transaction = NULL;
 	binder_alloc_free_buf(&target_proc->alloc, t->buffer);
 err_binder_alloc_buf_failed:
-err_bad_extra_size:
-	if (secctx)
-		security_release_secctx(secctx, secctx_sz);
-err_get_secctx_failed:
 	kfree(tcomplete);
 	binder_stats_deleted(BINDER_STAT_TRANSACTION_COMPLETE);
 err_alloc_tcomplete_failed:
@@ -3682,16 +3640,12 @@ static int binder_thread_write(struct binder_proc *proc,
 			buffer = binder_alloc_prepare_to_free(&proc->alloc,
 							      data_ptr);
 			if (IS_ERR_OR_NULL(buffer)) {
-				if (PTR_ERR(buffer) == -EPERM) {
-					binder_user_error(
-						"%d:%d BC_FREE_BUFFER u%016llx matched unreturned or currently freeing buffer\n",
-						proc->pid, thread->pid,
-						(u64)data_ptr);
-				} else {
-					binder_user_error(
-						"%d:%d BC_FREE_BUFFER u%016llx no match\n",
-						proc->pid, thread->pid,
-						(u64)data_ptr);
+				if(PTR_ERR(buffer) == -EPERM){
+					binder_user_error("%d:%d BC_FREE_BUFFER u%016llx no match or currently freeing buffer\n",
+						proc->pid, thread->pid, (u64)data_ptr);
+				}else{
+					binder_user_error("%d:%d BC_FREE_BUFFER u%016llx no matched \n",
+					proc->pid, thread->pid, (u64)data_ptr);
 				}
 				break;
 			}
@@ -4108,7 +4062,7 @@ retry:
 		struct list_head *list = NULL;
 		struct binder_transaction *t = NULL;
 		struct binder_thread *t_from;
-		size_t trsize = sizeof(*trd);
+        size_t trsize = sizeof(*trd);
 
 		binder_inner_proc_lock(proc);
 		if (!binder_worklist_empty_ilocked(&thread->todo))
@@ -4334,17 +4288,17 @@ retry:
 		trd->data_size = t->buffer->data_size;
 		trd->offsets_size = t->buffer->offsets_size;
 		trd->data.ptr.buffer = (binder_uintptr_t)
-			((uintptr_t)t->buffer->data +
+            ((uintptr_t)t->buffer->data +
 			binder_alloc_get_user_buffer_offset(&proc->alloc));
 		trd->data.ptr.offsets = trd->data.ptr.buffer +
 					ALIGN(t->buffer->data_size,
 					    sizeof(void *));
-
 		tr.secctx = t->security_ctx;
 		if (t->security_ctx) {
 			cmd = BR_TRANSACTION_SEC_CTX;
 			trsize = sizeof(tr);
 		}
+
 		if (put_user(cmd, (uint32_t __user *)ptr)) {
 			if (t_from)
 				binder_thread_dec_tmpref(t_from);

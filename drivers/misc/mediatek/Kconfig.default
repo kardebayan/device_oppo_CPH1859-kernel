@@ -5,7 +5,6 @@ config ANDROID_DEFAULT_SETTING
 	select ANDROID
 	select ANDROID_BINDER_IPC
 	select ARM64_SW_TTBR0_PAN
-	select ARM_KERNMEM_PERMS
 	select ARMV8_DEPRECATED
 	select ASHMEM
 	select AUDIT
@@ -168,7 +167,6 @@ config ANDROID_DEFAULT_SETTING
 	select SETEND_EMULATION
 	select SHMEM
 	select SIGNALFD
-	select SND
 	select STAGING
 	select SUSPEND
 	select SWP_EMULATION
