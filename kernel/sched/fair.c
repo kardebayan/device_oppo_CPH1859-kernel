@@ -39,6 +39,11 @@
 #include "tune.h"
 #include "walt.h"
 
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+// wenbin.liu@PSW.BSP.MM, 2018/05/02
+// Add for sched record
+#include <soc/oppo/oppo_healthinfo.h>
+#endif /*VENDOR_EDIT*/
 
 #ifndef CONFIG_MTK_SCHED_EAS_POWER_SUPPORT
 /* L+ cpu is defined in power.c */
@@ -816,6 +821,9 @@ void init_entity_runnable_average(struct sched_entity *se)
 	sa->util_sum = sa->util_avg * LOAD_AVG_MAX;
 	/* when this task enqueue'ed, it will contribute to its cfs_rq's load_avg */
 
+	/* sched: add trace_sched */
+	if (entity_is_task(se))
+		trace_sched_task_entity_avg(0, task_of(se), &se->avg);
 }
 
 static inline u64 cfs_rq_clock_task(struct cfs_rq *cfs_rq);
@@ -891,6 +899,9 @@ void post_init_entity_util_avg(struct sched_entity *se)
 
 	attach_entity_cfs_rq(se);
 
+	/* sched: add trace_sched */
+	if (entity_is_task(se))
+		trace_sched_task_entity_avg(0, task_of(se), &se->avg);
 }
 
 #else /* !CONFIG_SMP */
@@ -967,6 +978,12 @@ static void update_stats_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		update_stats_wait_start(cfs_rq, se);
 }
 
+#if defined(VENDOR_EDIT)&& defined(CONFIG_OPPO_HEALTHINFO)&& defined(CONFIG_SCHEDSTATS)
+// wenbin.liu@PSW.BSP.MM, 2018/05/09
+// Add for cat io_wait stats
+extern void ohm_schedstats_record(int sched_type, int fg, u64 delta);
+#endif /*VENDOR_EDIT*/
+
 static void
 update_stats_wait_end(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
@@ -977,6 +994,12 @@ update_stats_wait_end(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			rq_clock(rq_of(cfs_rq)) - se->statistics.wait_start);
 #ifdef CONFIG_SCHEDSTATS
 	if (entity_is_task(se)) {
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+// wenbin.liu@PSW.BSP.MM, 2018/05/26
+// Add for get sched latency stat
+                ohm_schedstats_record(OHM_SCHED_SCHEDLATENCY, current_is_fg(),
+                        ((rq_clock(rq_of(cfs_rq)) - se->statistics.wait_start) >> 20));
+#endif /*VENDOR_EDIT*/
 		trace_sched_stat_wait(task_of(se),
 			rq_clock(rq_of(cfs_rq)) - se->statistics.wait_start);
 	}
@@ -3303,6 +3326,7 @@ static inline void update_load_avg(struct sched_entity *se, int flags)
 
 	/* sched: add trace_sched */
 	if (entity_is_task(se)) {
+		trace_sched_task_entity_avg(1, task_of(se), &se->avg);
 		trace_sched_load_avg_task(task_of(se), &se->avg);
 	}
 
@@ -5598,10 +5622,9 @@ static int find_new_capacity(struct energy_env *eenv,
 {
 	int idx, max_idx = sge->nr_cap_states - 1;
 	unsigned long util = group_max_util(eenv);
-	unsigned long new_capacity = util;
-#ifdef CONFIG_CPU_FREQ_GOV_SCHEDPLUS
-	unsigned long max_util = SCHED_CAPACITY_SCALE;
+	unsigned long new_capacity = util, max_util = SCHED_CAPACITY_SCALE;
 
+#ifdef CONFIG_CPU_FREQ_GOV_SCHEDPLUS
 	/* OPP idx to refer capacity margin */
 	new_capacity = util * capacity_margin_dvfs >> SCHED_CAPACITY_SHIFT;
 	new_capacity = min(new_capacity, max_util);
@@ -8071,7 +8094,7 @@ static void update_cpu_capacity(struct sched_domain *sd, int cpu)
 		mcc->cpu = cpu;
 #ifdef CONFIG_SCHED_DEBUG
 		raw_spin_unlock_irqrestore(&mcc->lock, flags);
-		/* pr_info("CPU%d: update max cpu_capacity %lu\n", cpu, capacity); */
+		/*pr_info("CPU%d: update max cpu_capacity %lu\n", cpu, capacity);*/
 		goto skip_unlock;
 #endif
 	}
